@@ -129,12 +129,13 @@ Gather these for each brand before generating content:
 1. Select brand from dropdown
 2. Paste finished copy (written separately — engine handles layout, not copy)
 3. *(Optional)* Upload a visual reference — an image or PDF whose layout/style you want to match
-4. Choose output format(s) — check all you need:
+4. *(Optional)* Upload a product image — the product/cover/screenshot to feature as the hero of the content
+5. Choose output format(s) — check all you need:
    ☐ PDF (A4)  ☐ PNG/Instagram  ☐ Carousel  ☐ LinkedIn  ☐ Twitter/X  ☐ TikTok
-5. Add optional layout hints: "Hero image at top," "2-column layout," "minimal white space"
-6. Click Generate → Vercel serverless function runs
-7. Preview HTML output in right panel
-8. Export to desired format(s)
+6. Add optional layout hints: "Hero image at top," "2-column layout," "minimal white space"
+7. Click Generate → Vercel serverless function runs
+8. Preview HTML output in right panel
+9. Export to desired format(s)
 
 ### Vercel Serverless: `/api/generate`
 
@@ -150,22 +151,31 @@ interface GenerateRequest {
     data: string;        // base64-encoded image (PDF: first page converted to PNG)
     fileName?: string;
   };
+  productImage?: {
+    mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    data: string;        // base64-encoded — embedded directly as the content hero
+    fileName?: string;
+  };
 }
 
 interface GenerateResponse {
   projectId: string;
   htmlLayout: string;        // Complete HTML + inline CSS
   images: ImageResult[];     // { placement, url, prompt }
+  productPlacement?: {       // present when productImage was supplied
+    deviceFrame: 'laptop' | 'phone' | 'tablet' | 'none';
+    productType: 'digital' | 'physical';
+  };
 }
 ```
 
 **Generation flow:**
 1. Fetch brand profile + guidelines from Supabase
-2. If `visualReference` provided: convert PDF → PNG (first page) if needed
-3. Construct Claude message — text prompt with brand context + copy + format specs; if visual reference present, prepend it as a vision image block
-4. Call Claude API (with vision if reference supplied) → returns `{ htmlLayout, imagePrompts }`
-5. Call Cloudflare Workers AI in parallel for each image prompt
-6. Embed generated images into HTML
+2. Convert any PDF inputs → PNG (first page) if needed
+3. Construct Claude message — text prompt with brand context + copy + format specs; prepend vision image blocks for `visualReference` and/or `productImage` if provided
+4. Call Claude API (vision-enabled when images supplied) → returns `{ htmlLayout, imagePrompts, productPlacement? }`
+5. Call Cloudflare Workers AI in parallel for each image prompt (scene/background only when productImage present)
+6. Embed AI-generated scene images + the actual product image into HTML
 7. Return assembled HTML to frontend
 8. Auto-save as draft project in Supabase
 
@@ -219,6 +229,14 @@ Do NOT copy text or logos from the reference — style only.
 [rest of prompt as above]
 ```
 
+When a product image is provided, prepend it as a vision block and use product-mode instructions:
+- Claude identifies product type (digital/physical) and selects a device frame if needed
+- Layout uses `<img data-placement="product">` as the hero placeholder (swapped with actual image post-generation)
+- `imagePrompts` target scene/background only — the product itself is never AI-replaced
+- Response adds `productPlacement: { deviceFrame, productType }` to the JSON
+
+**For full prompt text and CSS device frame templates**: See [references/mockup-mode.md](references/mockup-mode.md)
+
 ### Format Specifications
 
 | Format | Dimensions | Layout Rules |
@@ -260,54 +278,6 @@ async function generateImage(prompt: string): Promise<string> {
 - Avoid faces unless essential (reduces rejection rate)
 - Include negative prompts for consistency: "no text, no logos, no watermarks"
 - Match format: "landscape 2:1 ratio" for LinkedIn, "portrait 4:5 ratio" for Instagram
-
----
-
-## Multi-Format Export
-
-### PDF Export
-
-```typescript
-import html2pdf from 'html2pdf.js';
-
-function exportPDF(htmlContent: string, brandName: string) {
-  const options = {
-    margin: 10,
-    filename: `${brandName}_${Date.now()}.pdf`,
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-  };
-  html2pdf().set(options).from(htmlContent).save();
-}
-```
-
-### PNG Export
-
-```typescript
-import html2canvas from 'html2canvas';
-
-async function exportPNG(element: HTMLElement, width: number, height: number) {
-  const canvas = await html2canvas(element, { scale: 2, width, height });
-  canvas.toBlob(blob => {
-    const url = URL.createObjectURL(blob!);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `export_${Date.now()}.png`;
-    a.click();
-  });
-}
-```
-
-### Carousel Export (Instagram)
-
-- Auto-paginate copy across 1080×1350px slides
-- Render each slide as separate PNG
-- Bundle into ZIP: `slide_1.png`, `slide_2.png`, etc.
-- Include `carousel_manifest.json` with copy per slide
-- Target 5-10 slides; break at natural paragraph/section points
-
-**For full export implementation**: See [references/export-formats.md](references/export-formats.md)
 
 ---
 
@@ -391,12 +361,15 @@ CREATE TABLE templates (
 
 ### Content Creation Page
 ```
-Left Panel (40%):                    Right Panel (60%):
-- Brand selector                     - HTML preview (live render)
-- Copy textarea                      - Export buttons: PDF | PNG | Carousel
-- Visual reference upload (optional) - Per-image: "Regenerate" button
-  [Drop image or PDF here]           - Inline copy edit
-  Accepted: JPG, PNG, WEBP, PDF
+Left Panel (40%):                       Right Panel (60%):
+- Brand selector                        - HTML preview (live render)
+- Copy textarea                         - Export buttons: PDF | PNG | Carousel
+- Visual reference (optional)           - Per-image: "Regenerate" button
+  [Drop image/PDF — style influence]    - Inline copy edit
+- Product image (optional)
+  [Drop product/cover/screenshot]
+  → becomes the hero; Claude builds
+    marketing content around it
 - Format checkboxes
 - Layout hints (optional)
 - [Generate] button
@@ -445,6 +418,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-side only
 5. **Auto-save always on** — Every generation auto-saves as draft. No "save" friction.
 6. **Version history for narratives** — Brand narratives are versioned; layout-only guidelines keep only latest.
 7. **Visual reference via Claude vision (single-pass)** — The reference image is included directly in the Claude API call as a vision block alongside the text prompt. No separate analysis step — Claude extracts style patterns and applies them to the layout in one pass. PDFs are converted to PNG (first page) on the server before sending.
+8. **Product image ≠ visual reference** — `productImage` is embedded directly as the HTML content hero (user's actual image, never replaced by AI). Cloudflare-generated images only fill scene/background slots around it. CSS device frames (laptop/phone/tablet) handle digital product mockups without extra AI calls.
 
 ---
 
@@ -462,6 +436,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-side only
 - [ ] Draft edit + regenerate workflow
 - [ ] Guidelines file upload (Supabase storage)
 - [ ] Visual reference upload (image or PDF → style-matched layout)
+- [ ] Product image upload → mockup-focused content with CSS device frames
 
 ### Phase 3
 - [ ] Per-image regeneration

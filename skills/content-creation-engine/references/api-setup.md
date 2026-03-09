@@ -54,7 +54,7 @@ const FORMAT_SPECS: Record<string, string> = {
 };
 
 export async function POST(req: NextRequest) {
-  const { brandId, copy, outputFormats, customHints, visualReference } = await req.json();
+  const { brandId, copy, outputFormats, customHints, visualReference, productImage } = await req.json();
 
   // 1. Fetch brand from Supabase
   const { data: brand } = await supabase
@@ -80,8 +80,9 @@ export async function POST(req: NextRequest) {
     customHints,
   });
 
-  // 3. Build message content — prepend visual reference image block if provided
+  // 3. Build message content — prepend vision image blocks if provided
   const userContent: Anthropic.MessageParam['content'] = [];
+
   if (visualReference) {
     userContent.push({
       type: 'image',
@@ -92,6 +93,18 @@ export async function POST(req: NextRequest) {
       text: 'The image above is a visual reference. Analyze its layout structure, typography hierarchy, color usage patterns, and visual composition. Apply those style patterns to the layout below — adapted to the brand context. Do NOT copy any text or logos from the reference.',
     });
   }
+
+  if (productImage) {
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: productImage.mediaType, data: productImage.data },
+    });
+    userContent.push({
+      type: 'text',
+      text: buildProductModePrefix(),
+    });
+  }
+
   userContent.push({ type: 'text', text: prompt });
 
   // 4. Call Claude (vision-enabled when reference provided)
@@ -102,7 +115,7 @@ export async function POST(req: NextRequest) {
   });
 
   const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
-  const { htmlLayout, imagePrompts } = JSON.parse(responseText);
+  const { htmlLayout, imagePrompts, productPlacement } = JSON.parse(responseText);
 
   // 5. Generate images in parallel
   const images = await Promise.all(
@@ -113,12 +126,20 @@ export async function POST(req: NextRequest) {
     }))
   );
 
-  // 6. Embed images into HTML
+  // 6. Embed AI-generated scene images into HTML
   let finalHtml = htmlLayout;
   for (const img of images) {
     finalHtml = finalHtml.replace(
       `data-placement="${img.placement}"`,
       `src="${img.url}" data-placement="${img.placement}"`
+    );
+  }
+
+  // Embed the actual product image directly (never AI-replaced)
+  if (productImage) {
+    finalHtml = finalHtml.replace(
+      'data-placement="product"',
+      `src="data:${productImage.mediaType};base64,${productImage.data}" data-placement="product"`
     );
   }
 
@@ -132,12 +153,39 @@ export async function POST(req: NextRequest) {
       image_prompts: imagePrompts,
       output_formats: outputFormats,
       has_visual_reference: !!visualReference,
+      has_product_image: !!productImage,
+      product_placement: productPlacement ?? null,
       status: 'draft',
     })
     .select()
     .single();
 
-  return NextResponse.json({ projectId: project.id, htmlLayout: finalHtml, images });
+  return NextResponse.json({ projectId: project.id, htmlLayout: finalHtml, images, productPlacement });
+}
+
+function buildProductModePrefix(): string {
+  return `The image above is a product to be featured in marketing content.
+
+Identify:
+1. Product type: digital (ebook, PDF cover, app/SaaS screenshot) or physical
+2. Best device frame if digital: laptop | phone | tablet | none
+3. Key visual selling points visible in the image
+
+Generate an HTML layout that:
+- Places the product as the primary visual hero using: <img data-placement="product">
+  (this placeholder is replaced with the actual product image after generation)
+- If digital: wraps the product placeholder in a CSS device frame (use inline CSS,
+  no external assets — pure CSS laptop/phone/tablet mockup)
+- Wraps brand-consistent copy and typography around the product
+- Uses imagePrompts ONLY for background/scene/lifestyle elements — NOT to replace
+  the product (e.g. "desk setup background", "lifestyle scene")
+
+Your JSON response MUST include productPlacement:
+{
+  "htmlLayout": "...",
+  "imagePrompts": [{ "description": "scene background only", "placement": "background" }],
+  "productPlacement": { "deviceFrame": "laptop|phone|tablet|none", "productType": "digital|physical" }
+}`;
 }
 
 function buildPrompt({ brand, narrative, copy, outputFormats, formatSpecs, customHints }: any) {
