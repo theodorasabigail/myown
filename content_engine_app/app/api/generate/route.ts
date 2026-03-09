@@ -87,6 +87,7 @@ Respond ONLY with valid JSON (no markdown fences, no extra text):
 
     const data = await cfAI('@cf/meta/llama-3.1-8b-instruct', {
       messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096,
     });
     const raw = stripMarkdown(data.result.response);
     const { htmlLayout, imagePrompts } = JSON.parse(raw);
