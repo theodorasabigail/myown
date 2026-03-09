@@ -19,7 +19,8 @@ export default function BrandsPage() {
 
   async function loadBrands() {
     const res = await fetch('/api/brands')
-    setBrands(await res.json())
+    const data = await res.json()
+    setBrands(Array.isArray(data) ? data : [])
   }
 
   async function handleSubmit(e: React.FormEvent) {
