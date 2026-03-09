@@ -128,7 +128,8 @@ Gather these for each brand before generating content:
 
 1. Select brand from dropdown
 2. Paste finished copy (written separately — engine handles layout, not copy)
-3. Choose output format(s): PDF, PNG, Instagram carousel, LinkedIn, Twitter/X, TikTok
+3. Choose output format(s) — check all you need:
+   ☐ PDF (A4)  ☐ PNG/Instagram  ☐ Carousel  ☐ LinkedIn  ☐ Twitter/X  ☐ TikTok
 4. Add optional layout hints: "Hero image at top," "2-column layout," "minimal white space"
 5. Click Generate → Vercel serverless function runs
 6. Preview HTML output in right panel
@@ -141,7 +142,7 @@ Gather these for each brand before generating content:
 interface GenerateRequest {
   brandId: string;
   copy: string;
-  outputFormat: 'pdf' | 'png' | 'carousel' | 'linkedin' | 'twitter' | 'tiktok';
+  outputFormats: ('pdf' | 'png' | 'carousel' | 'linkedin' | 'twitter' | 'tiktok')[];
   customHints?: string;
 }
 
@@ -154,7 +155,7 @@ interface GenerateResponse {
 
 **Generation flow:**
 1. Fetch brand profile + guidelines from Supabase
-2. Construct Claude prompt with brand context + copy + format specs
+2. Construct Claude prompt with brand context + copy + all requested format specs
 3. Call Claude API → returns `{ htmlLayout, imagePrompts }`
 4. Call Cloudflare Workers AI in parallel for each image prompt
 5. Embed generated images into HTML
@@ -290,6 +291,36 @@ async function exportPNG(element: HTMLElement, width: number, height: number) {
 
 ---
 
+## Multi-Format Export
+
+**Yes — the same content can be exported to multiple formats from a single generation.**
+
+Because HTML is the single source of truth, all exports are client-side operations. Generate once, then trigger any combination of exports in parallel:
+
+```typescript
+// After one generation, export to all selected formats simultaneously
+await batchExport(htmlLayout, ['pdf', 'png', 'carousel'], brandName);
+// → triggers PDF download + PNG download + carousel ZIP download at once
+```
+
+### How It Works
+
+1. User checks multiple format boxes before clicking Generate
+2. One Claude API call generates the HTML layout
+3. `batchExport()` fires all selected export functions in parallel
+4. User receives all files as simultaneous downloads
+
+### Quality Trade-off
+
+| Approach | API Calls | Quality | Use When |
+|----------|-----------|---------|----------|
+| **Batch export** (default) | 1 | Good — layout adapts to each format's CSS constraints | Most cases |
+| **Per-format generation** (Phase 3) | 1 per format | Best — Claude optimizes layout per format | Max quality needed |
+
+For most daily use (5-10 pieces/day), batch export is the right default. Per-format generation is a Phase 3 enhancement for cases where LinkedIn and Instagram need fundamentally different layouts.
+
+---
+
 ## Project History & Templates
 
 ### Projects Schema
@@ -385,7 +416,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-side only
 ## Implementation Decisions
 
 1. **Copy-first, layout-second** — Users write copy elsewhere (Claude chat); this engine layouts and images it. Reduces API complexity.
-2. **HTML as single source of truth** — One representation exports to all formats via html2pdf/html2canvas.
+2. **HTML as single source of truth** — One generation → export to any/all formats client-side with no extra API calls. Multi-format = one Claude call + parallel export functions.
 3. **Cloudflare for images** — Free tier covers daily use (5-10 pieces/day = ~15-30 images). No additional billing.
 4. **Supabase for everything** — Auth + DB + Storage = one vendor, one dashboard, Row Level Security ready.
 5. **Auto-save always on** — Every generation auto-saves as draft. No "save" friction.

@@ -257,6 +257,48 @@ async function saveExportToStorage(
 
 ---
 
+## Batch Export (Multi-Format)
+
+Export the same HTML to multiple formats simultaneously — no extra API calls needed.
+
+```typescript
+// lib/batchExport.ts
+type ExportFormat = 'pdf' | 'png' | 'carousel' | 'linkedin' | 'twitter' | 'tiktok';
+
+export async function batchExport(
+  htmlContent: string,
+  formats: ExportFormat[],
+  brandName: string
+): Promise<void> {
+  // All exports fire in parallel
+  await Promise.all(
+    formats.map(fmt => {
+      switch (fmt) {
+        case 'pdf':      return exportPDF(htmlContent, brandName);
+        case 'carousel': return exportCarousel(htmlContent, brandName);
+        default:         return exportPNG(htmlContent, fmt, brandName);
+      }
+    })
+  );
+}
+```
+
+**Usage in ExportButtons component:**
+```tsx
+const [selectedFormats, setSelectedFormats] = useState<ExportFormat[]>([]);
+
+<button onClick={() => batchExport(htmlLayout, selectedFormats, brandName)}>
+  Export {selectedFormats.length} format{selectedFormats.length !== 1 ? 's' : ''}
+</button>
+```
+
+**Notes:**
+- Multiple simultaneous `<a>` downloads are supported in all modern browsers
+- Carousel export produces a ZIP; others produce individual files
+- If saving to Supabase, call `saveExportToStorage` for each format after download
+
+---
+
 ## Format Quick Reference
 
 | Format | Dimensions | DPI | File | Use Case |

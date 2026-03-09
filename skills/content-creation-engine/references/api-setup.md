@@ -54,7 +54,7 @@ const FORMAT_SPECS: Record<string, string> = {
 };
 
 export async function POST(req: NextRequest) {
-  const { brandId, copy, outputFormat, customHints } = await req.json();
+  const { brandId, copy, outputFormats, customHints } = await req.json();
 
   // 1. Fetch brand from Supabase
   const { data: brand } = await supabase
@@ -75,8 +75,8 @@ export async function POST(req: NextRequest) {
     brand,
     narrative,
     copy,
-    outputFormat,
-    formatSpec: FORMAT_SPECS[outputFormat],
+    outputFormats,
+    formatSpecs: outputFormats.map((f: string) => `${f.toUpperCase()}: ${FORMAT_SPECS[f]}`).join(' | '),
     customHints,
   });
 
@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
       copy,
       layout_html: finalHtml,
       image_prompts: imagePrompts,
+      output_formats: outputFormats,   // store selected formats array
       status: 'draft',
     })
     .select()
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ projectId: project.id, htmlLayout: finalHtml, images });
 }
 
-function buildPrompt({ brand, narrative, copy, outputFormat, formatSpec, customHints }: any) {
+function buildPrompt({ brand, narrative, copy, outputFormats, formatSpecs, customHints }: any) {
   const colors = [brand.primary_color, ...(brand.secondary_colors ?? [])].join(', ');
   const typography = brand.typography
     ? `${brand.typography.fontFamily}, headings ${brand.typography.headingSizes}, body ${brand.typography.bodySize}`
@@ -142,8 +143,8 @@ Brand Context:
 Content to Layout:
 ${copy}
 
-Output Format: ${outputFormat.toUpperCase()}
-Specifications: ${formatSpec}
+Output Formats: ${outputFormats.map((f: string) => f.toUpperCase()).join(', ')}
+Specifications: ${formatSpecs}
 ${customHints ? `Custom Hints: ${customHints}` : ''}
 
 Rules:
@@ -263,6 +264,42 @@ const message = await withTimeout(
 // Fallback if image generation fails
 const imageUrl = await generateImage(prompt).catch(() => null);
 // null → render placeholder in HTML, don't block layout delivery
+```
+
+---
+
+## Multi-Format Batch Export (Client-Side)
+
+Call this after receiving `htmlLayout` from `/api/generate`:
+
+```typescript
+// lib/batchExport.ts
+import { exportPDF } from './exportPDF';
+import { exportPNG } from './exportPNG';
+import { exportCarousel } from './exportCarousel';
+
+type ExportFormat = 'pdf' | 'png' | 'carousel' | 'linkedin' | 'twitter' | 'tiktok';
+
+export async function batchExport(
+  htmlContent: string,
+  formats: ExportFormat[],
+  brandName: string
+): Promise<void> {
+  // All exports fire in parallel — one HTML, multiple downloads
+  await Promise.all(
+    formats.map(fmt => {
+      switch (fmt) {
+        case 'pdf':      return exportPDF(htmlContent, brandName);
+        case 'carousel': return exportCarousel(htmlContent, brandName);
+        default:         return exportPNG(htmlContent, fmt, brandName);
+      }
+    })
+  );
+}
+
+// Usage in ExportButtons.tsx:
+// await batchExport(htmlLayout, selectedFormats, brandName);
+// → triggers all file downloads simultaneously
 ```
 
 ---
