@@ -19,7 +19,7 @@ export default function ContentPage() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
-    fetch('/api/brands').then(r => r.json()).then(d => setBrands(d || []))
+    fetch('/api/brands').then(r => r.json()).then(d => setBrands(Array.isArray(d) ? d : []))
   }, [])
 
   function toggleFormat(f: Format) {
