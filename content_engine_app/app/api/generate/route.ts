@@ -1,8 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -19,6 +17,22 @@ const FORMAT_SPECS: Record<string, string> = {
 
 function stripMarkdown(text: string): string {
   return text.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+}
+
+async function cfAI(model: string, body: object): Promise<any> {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/ai/run/${model}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.CF_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) throw new Error(`CF AI error: ${res.status} ${await res.text()}`);
+  return res.json();
 }
 
 export async function POST(req: NextRequest) {
@@ -71,9 +85,10 @@ Respond ONLY with valid JSON (no markdown fences, no extra text):
   ]
 }`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const result = await model.generateContent(prompt);
-    const raw = stripMarkdown(result.response.text());
+    const data = await cfAI('@cf/meta/llama-3.1-8b-instruct', {
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = stripMarkdown(data.result.response);
     const { htmlLayout, imagePrompts } = JSON.parse(raw);
 
     // Generate images via Cloudflare Workers AI (optional — skip gracefully if not configured)
