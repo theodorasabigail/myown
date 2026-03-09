@@ -71,7 +71,7 @@ Respond ONLY with valid JSON (no markdown fences, no extra text):
   ]
 }`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
     const result = await model.generateContent(prompt);
     const raw = stripMarkdown(result.response.text());
     const { htmlLayout, imagePrompts } = JSON.parse(raw);

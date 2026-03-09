@@ -37,7 +37,7 @@ Return ONLY valid JSON (no markdown):
 }`,
     });
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
     const result = await model.generateContent(parts);
     const guidelines = JSON.parse(stripMarkdown(result.response.text()));
 
