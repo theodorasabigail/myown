@@ -186,6 +186,7 @@ export default function ContentPage() {
               srcDoc={htmlLayout}
               className="w-full h-full min-h-[600px] bg-white rounded-lg shadow-sm"
               style={{ border: 'none' }}
+              sandbox="allow-scripts"
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">

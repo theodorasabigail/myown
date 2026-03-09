@@ -55,37 +55,46 @@ export async function POST(req: NextRequest) {
       .map(f => `${f.toUpperCase()}: ${FORMAT_SPECS[f] ?? f}`)
       .join(' | ');
 
-    const prompt = `You are a professional layout designer for the brand "${brand.name}".
-Design a polished, brand-consistent HTML layout for the following marketing content.
+    const isCarousel = (outputFormats as string[]).includes('carousel');
 
-Brand:
-- Primary color: ${brand.primary_color ?? '#1A2B3C'}
-- Voice: ${brand.tone_of_voice ?? 'Professional'}
-- Narrative: ${narrative || 'Not provided'}
+    const prompt = `You are an expert UI/UX designer and front-end developer creating stunning marketing visuals.
 
-Content to lay out:
+BRAND: ${brand.name}
+Primary color: ${brand.primary_color ?? '#1A2B3C'}
+Voice: ${brand.tone_of_voice ?? 'Professional'}
+Narrative: ${narrative || 'Not provided'}
+
+CONTENT:
 ${copy}
 
-Output format(s): ${(outputFormats as string[]).join(', ')}
-Specifications: ${formatSpecs}
-${customHints ? `Layout hints: ${customHints}` : ''}
+FORMAT: ${(outputFormats as string[]).join(', ')} — Specs: ${formatSpecs}
+${customHints ? `HINTS: ${customHints}` : ''}
 
-Requirements:
-- Use inline CSS only (no external stylesheets or scripts)
-- Use the brand's primary color for headings, accents, and highlights
-- For each image, add a placeholder: <img data-placement="hero" style="width:100%;height:300px;object-fit:cover;background:#eee">
-- The layout must be self-contained and render correctly in an iframe
-- Make it visually polished — generous whitespace, clear hierarchy, professional typography
+VISUAL DESIGN RULES (follow strictly):
+1. Use the brand primary color for hero backgrounds, headings, and accent elements
+2. Create a rich visual hierarchy: large bold headline (48-72px), clear subheading (20-24px), readable body (16px)
+3. Add depth with box-shadow: 0 4px 24px rgba(0,0,0,0.12) on cards
+4. Use generous padding (40-60px sections), never cramped
+5. Hero section: full-width background in brand color, white text, centered, minimum 200px tall
+6. Use CSS gradients for backgrounds where appropriate: linear-gradient(135deg, primaryColor, darkerShade)
+7. Cards/sections: white background, border-radius: 12px, subtle border: 1px solid #eee
+8. Typography: font-family: 'Segoe UI', system-ui, sans-serif throughout
+9. Accent bars, dividers, or highlights using brand color
+10. Image placeholders: <div data-placement="hero" style="width:100%;height:280px;background:linear-gradient(135deg,#ddd,#eee);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#999;font-size:14px">Image</div>
 
-Respond ONLY with valid JSON (no markdown fences, no extra text):
-{
-  "htmlLayout": "<complete self-contained HTML with all inline CSS>",
-  "imagePrompts": [
-    { "description": "Detailed image generation prompt, max 100 words", "placement": "hero" }
-  ]
-}`;
+${isCarousel ? `CAROUSEL RULES (critical):
+- Create 4-6 slides, each a full-screen div (width:100%, min-height:500px)
+- All slides hidden by default (display:none) except slide 1 (display:flex)
+- Navigation: use <button onclick="..."> with inline JavaScript to show/hide slides — NEVER use <a href> for navigation
+- Include prev/next buttons and dot indicators
+- Each slide should have a distinct visual: alternating brand color background and white background
+- JavaScript navigation example: onclick="document.querySelectorAll('.slide').forEach(s=>s.style.display='none'); document.getElementById('s2').style.display='flex'"
+` : ''}
 
-    const data = await cfAI('@cf/meta/llama-3.1-8b-instruct', {
+OUTPUT: Respond ONLY with this exact JSON structure, no markdown, no explanation:
+{"htmlLayout":"<html>...</html>","imagePrompts":[{"description":"...","placement":"hero"}]}`;
+
+    const data = await cfAI('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 4096,
     });
