@@ -1,7 +1,7 @@
 ---
 name: content-creation-engine
 version: 1.0.0
-description: "When the user wants to build, set up, or use a brand-aware content creation system for generating marketing content at scale. Use when the user mentions 'content creation engine,' 'brand-consistent content,' 'multi-format export,' 'PDF export,' 'social carousel generation,' 'layout generation,' 'Cloudflare image generation,' 'brand management system,' or 'automated content production.' Covers brand profiles, Claude-powered layout generation, Cloudflare AI image generation, and multi-format export (PDF, PNG, Instagram carousels, LinkedIn, Twitter/X, TikTok). For standalone social posts without a generation engine, see social-content."
+description: "When the user wants to build, set up, or use a brand-aware content creation system for generating marketing content at scale. Use when the user mentions 'content creation engine,' 'brand-consistent content,' 'multi-format export,' 'PDF export,' 'social carousel generation,' 'layout generation,' 'Cloudflare image generation,' 'brand management system,' or 'automated content production.' Covers brand profiles, Gemini-powered layout generation, Cloudflare AI image generation, and multi-format export (PDF, PNG, Instagram carousels, LinkedIn, Twitter/X, TikTok). For standalone social posts without a generation engine, see social-content."
 ---
 
 # Content Creation Engine
@@ -18,7 +18,7 @@ Before building or using the engine, understand:
 1. **Mode** — Are you *building* the engine (new setup) or *using* an existing one to produce content?
 2. **Brand Context** — How many brands? Are guidelines stored or do they need to be created?
 3. **Starting point** — New React project, existing project, or adding to a deployed app?
-4. **Accounts** — Supabase, Cloudflare, and Anthropic API keys needed.
+4. **Accounts** — Supabase, Cloudflare, and Gemini API keys needed.
 
 ---
 
@@ -27,7 +27,7 @@ Before building or using the engine, understand:
 ```
 Brand Setup (one-time per brand)
     ↓
-Upload files + add narratives → Claude extracts guidelines → saved to Supabase
+Upload files + add narratives → Gemini extracts guidelines → saved to Supabase
     ↓
 Content Creation
     ↓
@@ -35,9 +35,9 @@ Brand Selector → Brand Context (extracted guidelines, colors, typography, tone
     ↓
 Paste finished copy + Optional: visual reference image | product image
     ↓
-Vercel Serverless → Claude API (vision analysis + layout generation)
+Vercel Serverless → Gemini API (vision analysis + layout generation)
     ↓
-Claude returns: HTML layout + image prompts
+Gemini returns: HTML layout + image prompts
     ↓
 Cloudflare Workers AI (image generation, in parallel)
     ↓
@@ -56,7 +56,7 @@ Supabase (brands, projects, exports persistence)
 | Hosting | Vercel | Native serverless, easy Claude API integration |
 | Database | Supabase (PostgreSQL) | Auth + DB + Storage in one vendor |
 | Image Gen | Cloudflare Workers AI | Free tier: 100k calls/month |
-| Layout Gen | Claude API (via Vercel) | Intelligent brand-aware HTML output |
+| Layout Gen | Gemini API (via Vercel) | Intelligent brand-aware HTML output |
 | PDF Export | html2pdf | HTML → PDF preserving layout |
 | PNG Export | html2canvas | HTML → PNG at specified dimensions |
 
@@ -68,8 +68,8 @@ Build in this sequence to get value fastest:
 
 1. **Supabase setup** — Schema, auth, storage buckets, RLS policies
 2. **Brand management** — CRUD, file upload, narrative versioning
-3. **Brand analysis endpoint** — `/api/brands/analyze`: Claude vision extracts guidelines from uploaded files
-4. **Generate endpoint** — `/api/generate`: Claude layout + Cloudflare images
+3. **Brand analysis endpoint** — `/api/brands/analyze`: Gemini vision extracts guidelines from uploaded files
+4. **Generate endpoint** — `/api/generate`: Gemini layout + Cloudflare images
 5. **HTML preview** — Live render in right panel
 6. **PDF + PNG export** — html2pdf + html2canvas, multi-format batch
 7. **Social format presets** — Carousel ZIP, LinkedIn, Twitter/X, TikTok
@@ -94,7 +94,7 @@ CREATE TABLE brands (
   secondary_colors JSONB,      -- ["#FF5733", "#33FF57"]
   typography JSONB,            -- { fontFamily, headingSizes, bodySize }
   tone_of_voice TEXT,          -- "Direct, contrarian, growth-focused"
-  guidelines JSONB,            -- Claude-extracted: { typography, colorPalette, spacing, tone, visualStyle }
+  guidelines JSONB,            -- Gemini-extracted: { typography, colorPalette, spacing, tone, visualStyle }
   created_at TIMESTAMP DEFAULT now(),
   updated_at TIMESTAMP DEFAULT now()
 );
@@ -119,13 +119,13 @@ CREATE TABLE brand_narratives (
 
 ### Brand Analysis (One-Time Setup)
 
-Upload files → Claude extracts structured guidelines → saved to `brands.guidelines`.
+Upload files → Gemini extracts structured guidelines → saved to `brands.guidelines`.
 
 **Setup flow:**
 1. Upload brand files (guidelines PDFs, past content samples, style sheets, images)
 2. Add text narratives: brand voice, positioning, tone guidance
-3. Click "Analyze Brand" → `/api/brands/analyze` calls Claude vision on uploaded files
-4. Claude extracts and returns structured `guidelines` JSON:
+3. Click "Analyze Brand" → `/api/brands/analyze` calls Gemini vision on uploaded files
+4. Gemini extracts and returns structured `guidelines` JSON:
    ```json
    {
      "typography": "Freight Display for headings, Inter for body, generous line-height",
@@ -193,8 +193,8 @@ interface GenerateResponse {
 **Generation flow:**
 1. Fetch brand profile + guidelines from Supabase
 2. Convert any PDF inputs → PNG (first page) if needed
-3. Construct Claude message — text prompt with brand context + copy + format specs; prepend vision image blocks for `visualReference` and/or `productImage` if provided
-4. Call Claude API (vision-enabled when images supplied) → returns `{ htmlLayout, imagePrompts, productPlacement? }`
+3. Construct Gemini message — text prompt with brand context + copy + format specs; prepend vision image blocks for `visualReference` and/or `productImage` if provided
+4. Call Gemini API (vision-enabled when images supplied) → returns `{ htmlLayout, imagePrompts, productPlacement? }`
 5. Call Cloudflare Workers AI in parallel for each image prompt (scene/background only when productImage present)
 6. Embed AI-generated scene images + the actual product image into HTML
 7. Return assembled HTML to frontend
@@ -204,9 +204,9 @@ interface GenerateResponse {
 
 ---
 
-## Claude Prompt Template
+## Gemini Prompt Template
 
-Send this to Claude via the Vercel serverless function:
+Send this to Gemini via the Vercel serverless function:
 
 When no visual reference is provided, send a single text message:
 
@@ -314,7 +314,7 @@ await batchExport(htmlLayout, ['pdf', 'png', 'carousel'], brandName);
 // → triggers PDF download + PNG download + carousel ZIP download at once
 ```
 
-One Claude API call generates the HTML → `batchExport()` fires all selected export functions in parallel → user receives simultaneous downloads. For maximum layout quality per format, use per-format generation (one Claude call per format).
+One Gemini API call generates the HTML → `batchExport()` fires all selected export functions in parallel → user receives simultaneous downloads. For maximum layout quality per format, use per-format generation (one Gemini call per format).
 
 ---
 
@@ -377,7 +377,7 @@ Left Panel (40%):                       Right Panel (60%):
   [Drop image/PDF — style influence]    - Inline copy edit
 - Product image (optional)
   [Drop product/cover/screenshot]
-  → becomes the hero; Claude builds
+  → becomes the hero; Gemini builds
     marketing content around it
 - Format checkboxes
 - Layout hints (optional)
@@ -396,7 +396,7 @@ Left Panel (40%):                       Right Panel (60%):
 
 ```bash
 # Vercel
-ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
 CF_ACCOUNT_ID=...
 CF_API_TOKEN=...
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
@@ -414,7 +414,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-side only
 4. **Supabase for everything** — Auth + DB + Storage = one vendor, one dashboard, Row Level Security ready.
 5. **Auto-save always on** — Every generation auto-saves as draft. No "save" friction.
 6. **Version history for narratives** — Brand narratives are versioned; layout-only guidelines keep only latest.
-7. **Visual reference via Claude vision (single-pass)** — The reference image is included directly in the Claude API call as a vision block alongside the text prompt. No separate analysis step — Claude extracts style patterns and applies them to the layout in one pass. PDFs are converted to PNG (first page) on the server before sending.
+7. **Visual reference via Gemini vision (single-pass)** — The reference image is included directly in the Gemini API call as a vision block alongside the text prompt. No separate analysis step — Gemini extracts style patterns and applies them to the layout in one pass. PDFs are converted to PNG (first page) on the server before sending.
 8. **Product image ≠ visual reference** — `productImage` is embedded directly as the HTML content hero (user's actual image, never replaced by AI). Cloudflare-generated images only fill scene/background slots around it. CSS device frames (laptop/phone/tablet) handle digital product mockups without extra AI calls.
 
 ---

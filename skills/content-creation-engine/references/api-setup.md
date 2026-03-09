@@ -19,7 +19,7 @@ Detailed implementation for the Vercel serverless functions powering the content
 │   └── projects/route.ts           # GET projects
 ├── lib/
 │   ├── supabase.ts                 # Supabase client
-│   ├── claude.ts                   # Claude API wrapper
+│   ├── gemini.ts                   # Gemini API wrapper
 │   └── cloudflare.ts              # Cloudflare Workers AI wrapper
 └── components/
     ├── BrandSelector.tsx
@@ -34,11 +34,11 @@ Detailed implementation for the Vercel serverless functions powering the content
 
 ```typescript
 // app/api/generate/route.ts
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
     .single();
 
   const narrative = brand?.brand_narratives?.[0]?.content ?? '';
-  const extractedGuidelines = brand?.guidelines ?? null;  // Claude-extracted on brand setup
+  const extractedGuidelines = brand?.guidelines ?? null;  // Gemini-extracted on brand setup
 
-  // 2. Build Claude prompt
+  // 2. Build Gemini prompt
   const prompt = buildPrompt({
     brand,
     narrative,
@@ -77,41 +77,27 @@ export async function POST(req: NextRequest) {
     customHints,
   });
 
-  // 3. Build message content — prepend vision image blocks if provided
-  const userContent: Anthropic.MessageParam['content'] = [];
+  // 3. Build message content array — prepend vision image blocks if provided
+  const parts: any[] = [];
 
   if (visualReference) {
-    userContent.push({
-      type: 'image',
-      source: { type: 'base64', media_type: visualReference.mediaType, data: visualReference.data },
-    });
-    userContent.push({
-      type: 'text',
+    parts.push({ inlineData: { data: visualReference.data, mimeType: visualReference.mediaType } });
+    parts.push({
       text: 'The image above is a visual reference. Analyze its layout structure, typography hierarchy, color usage patterns, and visual composition. Apply those style patterns to the layout below — adapted to the brand context. Do NOT copy any text or logos from the reference.',
     });
   }
 
   if (productImage) {
-    userContent.push({
-      type: 'image',
-      source: { type: 'base64', media_type: productImage.mediaType, data: productImage.data },
-    });
-    userContent.push({
-      type: 'text',
-      text: buildProductModePrefix(),
-    });
+    parts.push({ inlineData: { data: productImage.data, mimeType: productImage.mediaType } });
+    parts.push({ text: buildProductModePrefix() });
   }
 
-  userContent.push({ type: 'text', text: prompt });
+  parts.push({ text: prompt });
 
-  // 4. Call Claude (vision-enabled when reference provided)
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: userContent }],
-  });
-
-  const responseText = message.content[0].type === 'text' ? message.content[0].text : '';
+  // 4. Call Gemini (vision-enabled when reference provided)
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const result = await model.generateContent(parts);
+  const responseText = result.response.text();
   const { htmlLayout, imagePrompts, productPlacement } = JSON.parse(responseText);
 
   // 5. Generate images in parallel
@@ -269,17 +255,16 @@ export async function POST(req: NextRequest) {
   // fileUrls: array of Supabase storage public URLs (PDFs, images, style sheets)
 
   // Fetch file contents as base64 for vision
-  const fileBlocks: Anthropic.MessageParam['content'] = [];
+  const parts: any[] = [];
   for (const url of fileUrls) {
     const res = await fetch(url);
     const buffer = await res.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
-    const mediaType = res.headers.get('content-type') ?? 'image/png';
-    fileBlocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType as any, data: base64 } });
+    const mimeType = res.headers.get('content-type') ?? 'image/png';
+    parts.push({ inlineData: { data: base64, mimeType } });
   }
 
-  fileBlocks.push({
-    type: 'text',
+  parts.push({
     text: `Analyze the brand materials above and extract a structured brand guidelines profile.
 Return ONLY valid JSON (no markdown):
 {
@@ -291,13 +276,9 @@ Return ONLY valid JSON (no markdown):
 }`,
   });
 
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    messages: [{ role: 'user', content: fileBlocks }],
-  });
-
-  const guidelines = JSON.parse(message.content[0].type === 'text' ? message.content[0].text : '{}');
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const result = await model.generateContent(parts);
+  const guidelines = JSON.parse(result.response.text());
 
   // Save extracted guidelines to brand record
   await supabase.from('brands').update({ guidelines }).eq('id', brandId);
@@ -365,7 +346,7 @@ export const supabaseServer = createClient(
 ## Error Handling Patterns
 
 ```typescript
-// Wrap Claude calls with timeout
+// Wrap Gemini calls with timeout
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([
     promise,
@@ -375,8 +356,8 @@ const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   ]);
 
 // Use in generate:
-const message = await withTimeout(
-  anthropic.messages.create({ ... }),
+const result = await withTimeout(
+  model.generateContent(parts),
   15_000  // 15s timeout
 );
 
@@ -476,7 +457,7 @@ export async function prepareVisualReference(file: File): Promise<{
 
 | Service | Free Tier | Notes |
 |---------|-----------|-------|
-| Claude API | Pay-as-you-go | ~$0.003/1k tokens; budget ~$10/month |
+| Gemini API (Flash) | 15 req/min, 1M tokens/day | Free — get key at aistudio.google.com |
 | Cloudflare Workers AI | 100k calls/month | Resets monthly |
 | Vercel Functions | 100GB-hours/month | Well within limits for 10 pieces/day |
 | Supabase | 500MB DB, 1GB storage | Sufficient for MVP |
