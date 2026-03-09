@@ -452,6 +452,12 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-side only
 
 ---
 
+## Verification
+
+Run through the checks in [references/verification.md](references/verification.md) after each major build step. The end-to-end smoke test at the bottom covers all 6 success criteria in one sequence.
+
+---
+
 ## Related Skills
 
 - **social-content**: For manual social media content without the engine
